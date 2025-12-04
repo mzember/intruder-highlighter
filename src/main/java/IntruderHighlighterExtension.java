@@ -1,7 +1,7 @@
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 
-public class Extension implements BurpExtension
+public class IntruderHighlighterExtension implements BurpExtension
 {
     @Override
     public void initialize(MontoyaApi montoyaApi)
