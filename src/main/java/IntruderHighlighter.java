@@ -12,9 +12,11 @@ import java.awt.Component;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -58,7 +60,7 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
         HighlightColor.GRAY
     );
 
-    private static final Pattern MATCH_NOTE_PATTERN = Pattern.compile("^(\\d+)x match: .*", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MATCH_NOTE_PATTERN = Pattern.compile("(?i)^(\\d+)x\\s+match:\\s*(.*)$");
 
     private final Logging logging;
     private final List<String> configuredExpressions;
@@ -109,7 +111,8 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
 
     private void highlightMatches(List<HttpRequestResponse> rows)
     {
-        int highlighted = 0;
+        List<HttpRequestResponse> validRows = new ArrayList<>();
+        List<Map<String, Integer>> rowMatchCounts = new ArrayList<>();
         for (HttpRequestResponse row : rows)
         {
             if (!row.hasResponse())
@@ -117,50 +120,85 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
                 continue;
             }
 
-            List<String> matches = findMatches(row);
-            if (matches.isEmpty())
+            Map<String, Integer> matchCounts = countMatches(row.response().bodyToString());
+            validRows.add(row);
+            rowMatchCounts.add(matchCounts);
+        }
+
+        if (validRows.isEmpty())
+        {
+            logging.logToOutput("Intruder highlighter found no responses to analyze.");
+            return;
+        }
+
+        Map<HttpRequestResponse, List<String>> rowsToExpressions = new HashMap<>();
+        Set<String> triggeredExpressions = new LinkedHashSet<>();
+
+        for (String expression : configuredExpressions)
+        {
+            Map<Integer, Integer> frequency = new HashMap<>();
+            for (Map<String, Integer> counts : rowMatchCounts)
+            {
+                int occurrences = counts.getOrDefault(expression, 0);
+                frequency.merge(occurrences, 1, Integer::sum);
+            }
+
+            if (frequency.size() <= 1)
+            {
+                continue; // all rows have identical counts
+            }
+
+            int totalRows = rowMatchCounts.size();
+            Map.Entry<Integer, Integer> majorityEntry = frequency.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .orElseThrow();
+            int majorityCount = majorityEntry.getKey();
+            int majorityFrequency = majorityEntry.getValue();
+
+            if (majorityFrequency <= totalRows / 2)
+            {
+                continue; // no strict majority
+            }
+
+            for (int i = 0; i < validRows.size(); i++)
+            {
+                int occurrences = rowMatchCounts.get(i).getOrDefault(expression, 0);
+                if (occurrences != majorityCount)
+                {
+                    rowsToExpressions
+                        .computeIfAbsent(validRows.get(i), ignored -> new ArrayList<>())
+                        .add(expression);
+                    triggeredExpressions.add(expression);
+                }
+            }
+        }
+
+        int highlighted = 0;
+        for (Map.Entry<HttpRequestResponse, List<String>> entry : rowsToExpressions.entrySet())
+        {
+            HttpRequestResponse row = entry.getKey();
+            List<String> expressions = entry.getValue();
+            if (expressions.isEmpty())
             {
                 continue;
             }
 
-            String leadingExpression = matches.get(0);
-            HighlightColor color = colorAssignments.computeIfAbsent(leadingExpression, this::allocateNextColor);
+            HighlightColor color = colorAssignments.computeIfAbsent(expressions.get(0), this::allocateNextColor);
             Annotations annotations = row.annotations();
             annotations.setHighlightColor(color);
-            annotations.setNotes(buildMatchNote(annotations.notes(), matches));
+            annotations.setNotes(buildMatchNote(annotations.notes(), expressions));
             highlighted++;
         }
 
-        logging.logToOutput("Intruder highlighter marked " + highlighted + " row(s) that matched [" +
-            String.join(", ", configuredExpressions) + "].");
-    }
-
-    private HighlightColor allocateNextColor(String expression)
-    {
-        HighlightColor color = HIGHLIGHT_PALETTE.get(nextColorIndex % HIGHLIGHT_PALETTE.size());
-        nextColorIndex++;
-        return color;
-    }
-
-    private List<String> findMatches(HttpRequestResponse row)
-    {
-        String body = row.response().bodyToString();
-        if (body == null)
+        if (highlighted > 0)
         {
-            return Collections.emptyList();
+            logging.logToOutput("Intruder highlighter marked " + highlighted + " row(s) for expressions: " +
+                String.join(", ", triggeredExpressions) + ".");
         }
-
-        String normalized = body.toLowerCase(Locale.ROOT);
-        List<String> matches = new ArrayList<>();
-        for (int i = 0; i < configuredExpressionsLower.size(); i++)
+        else
         {
-            if (normalized.contains(configuredExpressionsLower.get(i)))
-            {
-                matches.add(configuredExpressions.get(i));
-            }
+            logging.logToOutput("Intruder highlighter found no anomalies for configured expressions.");
         }
-
-        return matches;
     }
 
     private String buildMatchNote(String existingNote, List<String> matches)
@@ -170,19 +208,120 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
             return existingNote == null ? "" : existingNote;
         }
 
-        String matchFragment = "match: " + String.join(" ", matches);
+        NoteState state = parseNoteState(existingNote);
+        Set<String> combined = new LinkedHashSet<>(state.expressions);
+        combined.addAll(matches);
+
+        int nextOrdinal = state.updateCount + 1;
+        String base = "match: " + String.join(", ", combined);
+
+        if (nextOrdinal > 1)
+        {
+            return nextOrdinal + "x " + base;
+        }
+
+        return base;
+    }
+
+    private NoteState parseNoteState(String existingNote)
+    {
         if (existingNote == null || existingNote.isBlank())
         {
-            return matchFragment;
+            return new NoteState(0, List.of());
         }
 
-        Matcher matcher = MATCH_NOTE_PATTERN.matcher(existingNote.trim());
+        String trimmed = existingNote.trim();
+        int updateCount = 0;
+        String body = trimmed;
+
+        Matcher matcher = MATCH_NOTE_PATTERN.matcher(trimmed);
         if (matcher.matches())
         {
-            int count = Integer.parseInt(matcher.group(1));
-            return (count + 1) + "x " + matchFragment;
+            updateCount = Integer.parseInt(matcher.group(1));
+            body = matcher.group(2).trim();
+        }
+        else if (trimmed.toLowerCase(Locale.ROOT).startsWith("match:"))
+        {
+            updateCount = 1;
+            body = trimmed.substring(trimmed.indexOf(':') + 1).trim();
+        }
+        else
+        {
+            return new NoteState(0, List.of());
         }
 
-        return "2x " + matchFragment;
+        List<String> expressions = new ArrayList<>();
+        if (!body.isEmpty())
+        {
+            for (String part : body.split("\\s*,\\s*"))
+            {
+                if (!part.isBlank())
+                {
+                    expressions.add(part);
+                }
+            }
+        }
+
+        return new NoteState(updateCount, expressions);
+    }
+
+    private Map<String, Integer> countMatches(String response)
+    {
+        Map<String, Integer> matches = new HashMap<>();
+        if (response == null || response.isBlank())
+        {
+            return matches;
+        }
+
+        String normalized = response.toLowerCase(Locale.ROOT);
+        for (int i = 0; i < configuredExpressions.size(); i++)
+        {
+            String expression = configuredExpressions.get(i);
+            String lowerExpression = configuredExpressionsLower.get(i);
+            if (lowerExpression.isEmpty())
+            {
+                continue;
+            }
+
+            int occurrences = countOccurrences(normalized, lowerExpression);
+            if (occurrences > 0)
+            {
+                matches.put(expression, occurrences);
+            }
+        }
+
+        return matches;
+    }
+
+    private int countOccurrences(String text, String term)
+    {
+        int occurrences = 0;
+        int index = 0;
+        while ((index = text.indexOf(term, index)) != -1)
+        {
+            occurrences++;
+            index += Math.max(term.length(), 1);
+        }
+
+        return occurrences;
+    }
+
+    private HighlightColor allocateNextColor(String expression)
+    {
+        HighlightColor color = HIGHLIGHT_PALETTE.get(nextColorIndex % HIGHLIGHT_PALETTE.size());
+        nextColorIndex++;
+        return color;
+    }
+
+    private static final class NoteState
+    {
+        private final int updateCount;
+        private final List<String> expressions;
+
+        private NoteState(int updateCount, List<String> expressions)
+        {
+            this.updateCount = updateCount;
+            this.expressions = expressions;
+        }
     }
 }
