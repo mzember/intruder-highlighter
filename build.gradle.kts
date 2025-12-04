@@ -10,6 +10,12 @@ dependencies {
     compileOnly("net.portswigger.burp.extensions:montoya-api:2025.8")
 }
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
 tasks.withType<JavaCompile>().configureEach {
     sourceCompatibility = "21"
     targetCompatibility = "21"
