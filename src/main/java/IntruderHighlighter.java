@@ -120,7 +120,7 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
             return;
         }
 
-        Map<HttpRequestResponse, List<String>> rowsToExpressions = new HashMap<>();
+        Map<HttpRequestResponse, Set<String>> rowsToExpressions = new HashMap<>();
         Set<String> triggeredExpressions = new LinkedHashSet<>();
 
         for (String expression : configuredExpressions) {
@@ -154,21 +154,22 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
                         i + 1, expression, occurrences, majorityCount);
 
                 rowsToExpressions
-                        .computeIfAbsent(validRows.get(i), ignored -> new ArrayList<>())
+                        .computeIfAbsent(validRows.get(i), ignored -> new LinkedHashSet<>())
                         .add(expression);
                 triggeredExpressions.add(expression);
             }
         }
 
         int highlighted = 0;
-        for (Map.Entry<HttpRequestResponse, List<String>> entry : rowsToExpressions.entrySet()) {
+        for (Map.Entry<HttpRequestResponse, Set<String>> entry : rowsToExpressions.entrySet()) {
             HttpRequestResponse row = entry.getKey();
-            List<String> expressions = entry.getValue();
+            List<String> expressions = new ArrayList<>(entry.getValue());
             if (expressions.isEmpty()) {
                 continue;
             }
 
-            HighlightColor color = colorAssignments.computeIfAbsent(expressions.get(0), this::allocateNextColor);
+            String comboKey = String.join("|", expressions);
+            HighlightColor color = colorAssignments.computeIfAbsent(comboKey, this::allocateNextColor);
             Annotations annotations = row.annotations();
             annotations.setHighlightColor(color);
             annotations.setNotes(buildMatchNote(annotations.notes(), expressions));
