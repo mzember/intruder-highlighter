@@ -62,6 +62,8 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
 
     private static final Pattern MATCH_NOTE_PATTERN = Pattern.compile("(?i)^(\\d+)x\\s+match:\\s*(.*)$");
 
+    private static final boolean DEBUG_ENABLED = true;
+
     private final Logging logging;
     private final List<String> configuredExpressions;
     private final List<String> configuredExpressionsLower;
@@ -155,6 +157,9 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
             int majorityCount = majorityEntry.getKey();
             int majorityFrequency = majorityEntry.getValue();
 
+            logDebug("Expression '%s' frequency=%s majority=%d (%d rows) totalRows=%d", expression,
+                frequency, majorityCount, majorityFrequency, totalRows);
+
             if (majorityFrequency <= totalRows / 2)
             {
                 continue; // no strict majority
@@ -165,6 +170,9 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
                 int occurrences = rowMatchCounts.get(i).getOrDefault(expression, 0);
                 if (occurrences != majorityCount)
                 {
+                    logDebug("Row #%d flagged for '%s': occurrences=%d vs majority=%d",
+                        i + 1, expression, occurrences, majorityCount);
+
                     rowsToExpressions
                         .computeIfAbsent(validRows.get(i), ignored -> new ArrayList<>())
                         .add(expression);
@@ -188,6 +196,7 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
             annotations.setHighlightColor(color);
             annotations.setNotes(buildMatchNote(annotations.notes(), expressions));
             highlighted++;
+            logDebug("Applying color %s to row for expressions %s", color.displayName(), expressions);
         }
 
         if (highlighted > 0)
@@ -304,6 +313,16 @@ public class IntruderHighlighter implements ContextMenuItemsProvider
         }
 
         return occurrences;
+    }
+
+    private void logDebug(String format, Object... args)
+    {
+        if (!DEBUG_ENABLED)
+        {
+            return;
+        }
+
+        logging.logToOutput("[DEBUG] " + String.format(format, args));
     }
 
     private HighlightColor allocateNextColor(String expression)
