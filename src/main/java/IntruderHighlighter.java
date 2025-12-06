@@ -141,24 +141,22 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
             int majorityCount = majorityEntry.getKey();
             int majorityFrequency = majorityEntry.getValue();
 
-            logDebug("Expression '%s' frequency=%s majority=%d (%d rows) totalRows=%d", expression,
-                    frequency, majorityCount, majorityFrequency, totalRows);
-
-            if (majorityFrequency <= totalRows / 2) {
-                continue; // no strict majority
-            }
+            logDebug("Expression '%s' frequency=%s majorityCount=%d majorityFrequency=%d totalRows=%d",
+                    expression, frequency, majorityCount, majorityFrequency, totalRows);
 
             for (int i = 0; i < validRows.size(); i++) {
                 int occurrences = rowMatchCounts.get(i).getOrDefault(expression, 0);
-                if (occurrences != majorityCount) {
-                    logDebug("Row #%d flagged for '%s': occurrences=%d vs majority=%d",
-                            i + 1, expression, occurrences, majorityCount);
-
-                    rowsToExpressions
-                            .computeIfAbsent(validRows.get(i), ignored -> new ArrayList<>())
-                            .add(expression);
-                    triggeredExpressions.add(expression);
+                if (occurrences == majorityCount) {
+                    continue;
                 }
+
+                logDebug("Row #%d flagged for '%s': occurrences=%d vs majorityCount=%d",
+                        i + 1, expression, occurrences, majorityCount);
+
+                rowsToExpressions
+                        .computeIfAbsent(validRows.get(i), ignored -> new ArrayList<>())
+                        .add(expression);
+                triggeredExpressions.add(expression);
             }
         }
 
