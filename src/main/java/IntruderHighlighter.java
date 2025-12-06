@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class IntruderHighlighter implements ContextMenuItemsProvider {
@@ -57,7 +56,7 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
             HighlightColor.MAGENTA,
             HighlightColor.GRAY);
 
-    private static final Pattern MATCH_NOTE_PATTERN = Pattern.compile("(?i)^(\\d+)x\\s+match:\\s*(.*)$");
+    private static final Pattern MATCHES_BLOCK_PATTERN = Pattern.compile("\\s*\\[matches:\\s*[^\\]]*\\]\\s*", Pattern.CASE_INSENSITIVE);
 
     private static final boolean DEBUG_ENABLED = true;
 
@@ -105,6 +104,7 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
     private void highlightMatches(List<HttpRequestResponse> rows) {
         List<HttpRequestResponse> validRows = new ArrayList<>();
         List<Map<String, Integer>> rowMatchCounts = new ArrayList<>();
+        Map<HttpRequestResponse, Map<String, Integer>> rowCountsByRow = new HashMap<>();
         for (HttpRequestResponse row : rows) {
             if (!row.hasResponse()) {
                 continue;
@@ -113,6 +113,7 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
             Map<String, Integer> matchCounts = countMatches(row.response().bodyToString());
             validRows.add(row);
             rowMatchCounts.add(matchCounts);
+            rowCountsByRow.put(row, matchCounts);
         }
 
         if (validRows.isEmpty()) {
@@ -171,8 +172,9 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
             String comboKey = String.join("|", expressions);
             HighlightColor color = colorAssignments.computeIfAbsent(comboKey, this::allocateNextColor);
             Annotations annotations = row.annotations();
+            Map<String, Integer> counts = rowCountsByRow.getOrDefault(row, Collections.emptyMap());
             annotations.setHighlightColor(color);
-            annotations.setNotes(buildMatchNote(annotations.notes(), expressions));
+            annotations.setNotes(buildMatchNote(annotations.notes(), expressions, counts));
             highlighted++;
             logDebug("Applying color %s to row for expressions %s", color.displayName(), expressions);
         }
@@ -185,55 +187,32 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
         }
     }
 
-    private String buildMatchNote(String existingNote, List<String> matches) {
+    private String buildMatchNote(String existingNote, List<String> matches, Map<String, Integer> counts) {
         if (matches.isEmpty()) {
-            return existingNote == null ? "" : existingNote;
+            return removeMatchesSegment(existingNote);
         }
 
-        NoteState state = parseNoteState(existingNote);
-        Set<String> combined = new LinkedHashSet<>(state.expressions);
-        combined.addAll(matches);
-
-        int nextOrdinal = state.updateCount + 1;
-        String base = "match: " + String.join(", ", combined);
-
-        if (nextOrdinal > 1) {
-            return nextOrdinal + "x " + base;
+        List<String> entries = new ArrayList<>();
+        for (String expression : matches) {
+            int occurrences = counts.getOrDefault(expression, 0);
+            entries.add(occurrences + "x " + expression);
         }
 
-        return base;
+        String block = "[matches: " + String.join(", ", entries) + "]";
+        String cleaned = removeMatchesSegment(existingNote);
+        if (cleaned.isBlank()) {
+            return block;
+        }
+
+        return cleaned.trim() + " " + block;
     }
 
-    private NoteState parseNoteState(String existingNote) {
-        if (existingNote == null || existingNote.isBlank()) {
-            return new NoteState(0, List.of());
+    private String removeMatchesSegment(String note) {
+        if (note == null || note.isBlank()) {
+            return "";
         }
 
-        String trimmed = existingNote.trim();
-        int updateCount = 0;
-        String body = trimmed;
-
-        Matcher matcher = MATCH_NOTE_PATTERN.matcher(trimmed);
-        if (matcher.matches()) {
-            updateCount = Integer.parseInt(matcher.group(1));
-            body = matcher.group(2).trim();
-        } else if (trimmed.toLowerCase(Locale.ROOT).startsWith("match:")) {
-            updateCount = 1;
-            body = trimmed.substring(trimmed.indexOf(':') + 1).trim();
-        } else {
-            return new NoteState(0, List.of());
-        }
-
-        List<String> expressions = new ArrayList<>();
-        if (!body.isEmpty()) {
-            for (String part : body.split("\\s*,\\s*")) {
-                if (!part.isBlank()) {
-                    expressions.add(part);
-                }
-            }
-        }
-
-        return new NoteState(updateCount, expressions);
+        return MATCHES_BLOCK_PATTERN.matcher(note).replaceAll("").trim();
     }
 
     private Map<String, Integer> countMatches(String response) {
@@ -284,13 +263,4 @@ public class IntruderHighlighter implements ContextMenuItemsProvider {
         return color;
     }
 
-    private static final class NoteState {
-        private final int updateCount;
-        private final List<String> expressions;
-
-        private NoteState(int updateCount, List<String> expressions) {
-            this.updateCount = updateCount;
-            this.expressions = expressions;
-        }
-    }
 }
