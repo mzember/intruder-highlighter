@@ -22,6 +22,7 @@ In Burp Intruder results window, this **extensions highlights only the interesti
 ## Limitations
 - **Patterns are built-in! Any grep-match patterns you add to Intruder attack settings are not visible to the extension via API.**
 - The extension can only see the user’s current selection because the Montoya API does not expose the full Intruder table; you must select the rows before invoking the highlight action.
+- Does not handle HTTP status codes yet, neither times of responses.
 
 ## Details
 Color assignments are per-combination-of-patterns so you can see which match is responsible. The matching is case-insensitive, ignores headers, and exposes debug output by default to explain every decision.
