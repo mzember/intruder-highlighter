@@ -16,8 +16,8 @@ In Burp Intruder results window, this **extensions highlights only the interesti
 2. Select the rows you want to evaluate (Ctrl+A to grab them all), right-click any row, and choose **Extensions > Intruder Highlighter > Highlight rows that match built-in list**.
 
 ## Output
-1. Rows whose expression counts differ from the majority will be recolored; they also receive a `[matches: …]` note with counts.
-1. See debug logging output if you need to understand why a particular expression was flagged: in Extensions, in the bottom part under "Output" tab.
+1. Rows whose expression counts differ from the majority will be recolored; they also receive a `[matches: pattern1 pattern2]` note.
+1. See debug logging output if you need: in Extensions, in the bottom part under "Output" tab.
 
 ## Limitations
 - **Patterns are built-in! Any grep-match patterns you add to Intruder attack settings are not visible to the extension via API.**
