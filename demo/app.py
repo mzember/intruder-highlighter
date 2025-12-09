@@ -128,7 +128,7 @@ def login():
         if special:
             return jsonify({"success": False, "message": special}), 403
 
-    return jsonify({"success": False, "message": "Invalid credentials."}), 401
+    return jsonify({"success": False, "message": "Login failed."}), 401
 
 
 if __name__ == "__main__":
